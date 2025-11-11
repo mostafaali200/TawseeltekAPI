@@ -115,7 +115,7 @@ builder.Services.AddCors(options =>
     {
         policy
             .WithOrigins(
-                "http://localhost:5173",   // ✅ أضف هذا السطر
+                "http://localhost:5173",
                 "https://tawseeltek.netlify.app",
                 "https://mostafaalidragmeh.github.io",
                 "https://tawseeltek.onrender.com"
@@ -134,24 +134,20 @@ var app = builder.Build();
 // =========================================================
 // ✅ Middleware
 // =========================================================
-if (app.Environment.IsDevelopment())
+app.UseHttpsRedirection();
+
+// ✅ Swagger في جميع البيئات (حتى Azure)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Tawseeltek API v1");
-        c.DocumentTitle = "🚗 Tawseeltek API Docs";
-    });
-}
-else
-{
-    app.UseHttpsRedirection();
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Tawseeltek API v1");
+    c.DocumentTitle = "🚗 Tawseeltek API Docs";
+});
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(
-        Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")),
+    // 🔧 إصلاح مشكلة المسار المزدوج (wwwroot داخل wwwroot)
+    FileProvider = new PhysicalFileProvider(Directory.GetCurrentDirectory()),
     RequestPath = "",
     OnPrepareResponse = ctx =>
     {
@@ -173,6 +169,9 @@ app.MapHub<LocationHub>("/hubs/location");
 // ✅ Controllers
 // =========================================================
 app.MapControllers();
+
+// ✅ توجيه تلقائي إلى Swagger عند زيارة الصفحة الرئيسية
+app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // =========================================================
 // ✅ تشفير كلمات المرور القديمة مرة واحدة فقط
@@ -206,6 +205,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 // =========================================================
-// ✅ تشغيل التطبيق على البورت الافتراضي
+// ✅ تشغيل التطبيق
 // =========================================================
 app.Run();
