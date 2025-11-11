@@ -107,7 +107,7 @@ builder.Services.AddHttpClient<FirebaseV1Service>();
 builder.Services.AddSignalR();
 
 // =========================================================
-// ✅ CORS (مقيد ومفتوح فقط للمواقع الموثوقة)
+// ✅ CORS
 // =========================================================
 builder.Services.AddCors(options =>
 {
@@ -136,7 +136,7 @@ var app = builder.Build();
 // =========================================================
 app.UseHttpsRedirection();
 
-// ✅ Swagger في جميع البيئات (حتى Azure)
+// ✅ Swagger في جميع البيئات
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
@@ -144,18 +144,35 @@ app.UseSwaggerUI(c =>
     c.DocumentTitle = "🚗 Tawseeltek API Docs";
 });
 
-app.UseStaticFiles(new StaticFileOptions
-{
-    // 🔧 إصلاح مشكلة المسار المزدوج (wwwroot داخل wwwroot)
-    FileProvider = new PhysicalFileProvider(Directory.GetCurrentDirectory()),
-    RequestPath = "",
-    OnPrepareResponse = ctx =>
-    {
-        ctx.Context.Response.Headers.Append("Cache-Control", "no-store");
-        ctx.Context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-    }
-});
+// =========================================================
+// ✅ تحديد المسار الديناميكي للملفات الثابتة (wwwroot)
+// =========================================================
+var isAzure = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") != null;
+var staticFilesRoot = isAzure
+    ? Directory.GetCurrentDirectory() // في Azure
+    : Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"); // في Windows
 
+if (Directory.Exists(staticFilesRoot))
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(staticFilesRoot),
+        RequestPath = "",
+        OnPrepareResponse = ctx =>
+        {
+            ctx.Context.Response.Headers.Append("Cache-Control", "no-store");
+            ctx.Context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+        }
+    });
+}
+else
+{
+    Console.WriteLine($"⚠️ لم يتم العثور على مجلد الملفات الثابتة: {staticFilesRoot}");
+}
+
+// =========================================================
+// ✅ باقي الإعدادات
+// =========================================================
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -170,11 +187,11 @@ app.MapHub<LocationHub>("/hubs/location");
 // =========================================================
 app.MapControllers();
 
-// ✅ توجيه تلقائي إلى Swagger عند زيارة الصفحة الرئيسية
+// ✅ توجيه تلقائي إلى Swagger
 app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // =========================================================
-// ✅ تشفير كلمات المرور القديمة مرة واحدة فقط
+// ✅ تشفير كلمات المرور القديمة (مرة واحدة فقط)
 // =========================================================
 using (var scope = app.Services.CreateScope())
 {
