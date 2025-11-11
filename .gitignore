@@ -1,0 +1,76 @@
+﻿# ===============================
+# ✅ .NET / ASP.NET Core Ignore
+# ===============================
+
+# Build results
+bin/
+obj/
+out/
+Debug/
+Release/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.vs/
+
+# Logs
+*.log
+*.tlog
+
+# Visual Studio cache/options
+.vscode/
+.vs/
+*.dbmdl
+
+# Publish results
+publish/
+wwwroot/uploads/temp/
+wwwroot/uploads/*.tmp
+
+# Configuration files with secrets
+appsettings.Development.json
+appsettings.Production.json
+appsettings.Local.json
+secrets.json
+*.secret.json
+
+# JSON keys (Google, Firebase, etc.)
+*tawseeltek*.json
+*firebase*.json
+*serviceAccount*.json
+
+# Other sensitive data
+*.pfx
+*.cer
+*.key
+*.pem
+
+# Backup & temp
+*.bak
+*.tmp
+*.swp
+*.old
+
+# OS junk files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Rider / JetBrains
+.idea/
+
+# Optional: exclude test coverage reports
+coverage/
+TestResults/
+
+# Optional: exclude EF migrations snapshots (keep only if you use them)
+# Migrations/
+# منع رفع الصور الحساسة نهائيًا
+wwwroot/uploads/
+!wwwroot/uploads/.keep
+appsettings.Development.json
+appsettings.Production.json
