@@ -100,6 +100,7 @@ builder.Services.AddAuthorization();
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<AppSettingsService>();
 builder.Services.AddHttpClient<FirebaseV1Service>();
+builder.Services.AddScoped<AzureBlobStorageService>(); // ✅ أضف هذا
 
 // =========================================================
 // ✅ SignalR
