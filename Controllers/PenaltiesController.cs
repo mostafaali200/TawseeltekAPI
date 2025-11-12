@@ -1,11 +1,14 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization; // ✅ أضف هذا السطر في الأعلى
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TawseeltekAPI.Data;
 using TawseeltekAPI.Models;
 using WebApplication1.Dto;
 
+
 [ApiController]
 [Route("api/[controller]")]
+[Authorize(Roles = "Admin,Supervisor")] // ✅ أضف هذا السطر لحماية جميع الدوال داخل الكنترولر
 public class PenaltyController : ControllerBase
 {
     private readonly AppDbContext _context;

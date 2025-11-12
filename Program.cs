@@ -145,30 +145,27 @@ app.UseSwaggerUI(c =>
 });
 
 // =========================================================
-// ✅ تحديد المسار الديناميكي للملفات الثابتة (wwwroot)
+// ✅ تحديد المسار الصحيح للملفات الثابتة
 // =========================================================
-var isAzure = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") != null;
-var staticFilesRoot = isAzure
-    ? Directory.GetCurrentDirectory() // في Azure
-    : Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"); // في Windows
+var staticFilesRoot = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
 
-if (Directory.Exists(staticFilesRoot))
+// تأكد من وجود المجلد
+if (!Directory.Exists(staticFilesRoot))
 {
-    app.UseStaticFiles(new StaticFileOptions
+    Directory.CreateDirectory(staticFilesRoot);
+    Console.WriteLine($"📁 تم إنشاء مجلد wwwroot تلقائيًا: {staticFilesRoot}");
+}
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(staticFilesRoot),
+    RequestPath = "",
+    OnPrepareResponse = ctx =>
     {
-        FileProvider = new PhysicalFileProvider(staticFilesRoot),
-        RequestPath = "",
-        OnPrepareResponse = ctx =>
-        {
-            ctx.Context.Response.Headers.Append("Cache-Control", "no-store");
-            ctx.Context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
-        }
-    });
-}
-else
-{
-    Console.WriteLine($"⚠️ لم يتم العثور على مجلد الملفات الثابتة: {staticFilesRoot}");
-}
+        ctx.Context.Response.Headers.Append("Cache-Control", "no-store");
+        ctx.Context.Response.Headers.Append("X-Content-Type-Options", "nosniff");
+    }
+});
 
 // =========================================================
 // ✅ باقي الإعدادات

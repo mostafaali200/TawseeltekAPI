@@ -5,6 +5,9 @@ using TawseeltekAPI.Data;
 using TawseeltekAPI.Dto;
 using TawseeltekAPI.Models;
 using WebApplication1.Dto;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using TawseeltekAPI.Services; // ✅ لإحضار AzureBlobStorageService
 
 namespace TawseeltekAPI.Controllers
 {
@@ -14,11 +17,13 @@ namespace TawseeltekAPI.Controllers
     {
         private readonly AppDbContext _context;
         private readonly PasswordHasher<User> _passwordHasher;
+        private readonly AzureBlobStorageService _storage; // ✅ خدمة Azure Blob
 
-        public DriverController(AppDbContext context)
+        public DriverController(AppDbContext context, AzureBlobStorageService storage)
         {
             _context = context;
             _passwordHasher = new PasswordHasher<User>();
+            _storage = storage;
         }
 
         // ✅ توليد كود إحالة فريد
@@ -106,18 +111,11 @@ namespace TawseeltekAPI.Controllers
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // ✅ دالة حفظ الملفات
-            string SaveFile(IFormFile file, string folder)
+            // ✅ دالة حفظ الملفات إلى Azure
+            async Task<string> SaveFileAsync(IFormFile file, string folder)
             {
                 if (file == null) return null;
-                var uploads = Path.Combine("wwwroot/uploads", folder);
-                if (!Directory.Exists(uploads)) Directory.CreateDirectory(uploads);
-
-                var fileName = Guid.NewGuid() + Path.GetExtension(file.FileName);
-                var filePath = Path.Combine(uploads, fileName);
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                    file.CopyTo(stream);
-                return $"/uploads/{folder}/{fileName}";
+                return await _storage.UploadAsync(file.OpenReadStream(), file.FileName, file.ContentType, folder);
             }
 
             var driver = new Driver
@@ -126,9 +124,9 @@ namespace TawseeltekAPI.Controllers
                 VehicleType = dto.VehicleType,
                 PlateNumber = dto.PlateNumber,
                 ModelYear = dto.ModelYear,
-                LicenseImage = SaveFile(dto.LicenseImage, "licenses"),
-                VehicleLicenseImage = SaveFile(dto.VehicleLicenseImage, "vehicle_licenses"),
-                ProfileImage = SaveFile(dto.ProfileImage, "profiles"),
+                LicenseImage = await SaveFileAsync(dto.LicenseImage, "licenses"),
+                VehicleLicenseImage = await SaveFileAsync(dto.VehicleLicenseImage, "vehicle_licenses"),
+                ProfileImage = await SaveFileAsync(dto.ProfileImage, "profiles"),
                 Balance = 0m,
                 AvailabilityStatus = "Unavailable",
                 Verified = false,
@@ -184,25 +182,19 @@ namespace TawseeltekAPI.Controllers
             if (dto.ModelYear > 0)
                 driver.ModelYear = dto.ModelYear;
 
-            string SaveFile(IFormFile file, string folder)
+            // ✅ نفس منطق الحفظ ولكن إلى Azure
+            async Task<string> SaveFileAsync(IFormFile file, string folder)
             {
                 if (file == null) return null;
-                var uploads = Path.Combine("wwwroot/uploads", folder);
-                if (!Directory.Exists(uploads)) Directory.CreateDirectory(uploads);
-
-                var fileName = Guid.NewGuid() + Path.GetExtension(file.FileName);
-                var filePath = Path.Combine(uploads, fileName);
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                    file.CopyTo(stream);
-                return $"/uploads/{folder}/{fileName}";
+                return await _storage.UploadAsync(file.OpenReadStream(), file.FileName, file.ContentType, folder);
             }
 
             if (dto.ProfileImage != null)
-                driver.ProfileImage = SaveFile(dto.ProfileImage, "profiles");
+                driver.ProfileImage = await SaveFileAsync(dto.ProfileImage, "profiles");
             if (dto.LicenseImage != null)
-                driver.LicenseImage = SaveFile(dto.LicenseImage, "licenses");
+                driver.LicenseImage = await SaveFileAsync(dto.LicenseImage, "licenses");
             if (dto.VehicleLicenseImage != null)
-                driver.VehicleLicenseImage = SaveFile(dto.VehicleLicenseImage, "vehicle_licenses");
+                driver.VehicleLicenseImage = await SaveFileAsync(dto.VehicleLicenseImage, "vehicle_licenses");
 
             driver.LastUpdated = DateTime.UtcNow;
             await _context.SaveChangesAsync();
@@ -319,19 +311,10 @@ namespace TawseeltekAPI.Controllers
                                                .FirstOrDefaultAsync(d => d.DriverID == id);
             if (driver == null) return NotFound("Driver not found");
 
-            void DeleteFile(string path)
-            {
-                if (!string.IsNullOrEmpty(path))
-                {
-                    var filePath = Path.Combine("wwwroot", path.TrimStart('/'));
-                    if (System.IO.File.Exists(filePath))
-                        System.IO.File.Delete(filePath);
-                }
-            }
-
-            DeleteFile(driver.ProfileImage);
-            DeleteFile(driver.LicenseImage);
-            DeleteFile(driver.VehicleLicenseImage);
+            // ✅ حذف الصور من Azure
+            await _storage.DeleteAsync(driver.ProfileImage);
+            await _storage.DeleteAsync(driver.LicenseImage);
+            await _storage.DeleteAsync(driver.VehicleLicenseImage);
 
             _context.Users.Remove(driver.User);
             await _context.SaveChangesAsync();
