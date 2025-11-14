@@ -227,6 +227,8 @@ namespace TawseeltekAPI.Controllers
             return CreatedAtAction(nameof(GetUser), new { id = user.UserID }, user);
         }
 
+
+
         // -----------------------------
         // 🔑 تسجيل الدخول
         // -----------------------------
@@ -511,10 +513,10 @@ namespace TawseeltekAPI.Controllers
 
         [HttpGet("Passengers")]
         [Authorize(Roles = "Admin,Supervisor")]
-        public async Task<ActionResult<object>> GetPassengers(
-    [FromQuery] string? search,
-    [FromQuery] int page = 1,
-    [FromQuery] int pageSize = 10)
+          public async Task<ActionResult<object>> GetPassengers(
+            [FromQuery] string? search,
+            [FromQuery] int page = 1,
+             [FromQuery] int pageSize = 10)
         {
             var query = _context.Users.Where(u => u.Role == "Passenger");
 
@@ -551,6 +553,17 @@ namespace TawseeltekAPI.Controllers
                 .ToListAsync();
 
             return Ok(new { total, passengers });
+        }
+        [HttpGet("CheckReferral")]
+        [AllowAnonymous]
+        public async Task<IActionResult> CheckReferral([FromQuery] string code)
+        {
+            if (string.IsNullOrEmpty(code))
+                return BadRequest(new { exists = false, message = "الكود فارغ" });
+
+            bool exists = await _context.Users.AnyAsync(u => u.ReferralCode == code);
+
+            return Ok(new { exists });
         }
     }
 }
