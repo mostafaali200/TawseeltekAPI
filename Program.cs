@@ -188,7 +188,7 @@ app.MapHub<RideHub>("/hubs/ride");app.MapHub<LocationHub>("/hubs/location");
 app.MapHub<RideHub>("/hubs/ride");
 
 // ✅ Turbo: ربط HubContext لإرسال الإشعارات من Controllers
-LocationHub._hubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
+LocationHub.HubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
 RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
 // =========================================================
 // ✅ Controllers

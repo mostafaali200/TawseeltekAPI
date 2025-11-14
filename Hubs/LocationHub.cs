@@ -8,7 +8,8 @@ namespace TawseeltekAPI.Hubs
     [Authorize]
     public class LocationHub : Hub
     {
-        public static IHubContext<LocationHub>? _hubContextRef;
+        // 🔥 هذا هو المرجع الذي سنملأه من Program.cs
+        public static IHubContext<LocationHub>? HubContextRef { get; set; }
 
         // آخر موقع للسائق (Lat, Lng, Time)
         private static readonly ConcurrentDictionary<int, (double Lat, double Lng, DateTime Ts)>
@@ -23,7 +24,7 @@ namespace TawseeltekAPI.Hubs
         // مؤقّت لإرسال Batch كل 1 ثانية
         private static readonly Timer _batchTimer;
 
-        // إعدادات
+        // إعدادات JSON
         private static readonly JsonSerializerOptions _jsonOptions =
             new JsonSerializerOptions { WriteIndented = false };
 
@@ -43,6 +44,7 @@ namespace TawseeltekAPI.Hubs
             1000);  // يرسل كل ثانية
         }
 
+        // عند اتصال مستخدم
         public override Task OnConnectedAsync()
         {
             _connections[Context.ConnectionId] = "connected";
@@ -61,7 +63,7 @@ namespace TawseeltekAPI.Hubs
         public Task UpdateLocation(int driverId, double lat, double lng)
         {
             _drivers[driverId] = (lat, lng, DateTime.UtcNow);
-            _dirty[driverId] = true; // علم أنه تغير لتقليل الإرسال
+            _dirty[driverId] = true; // علامة أن الموقع تغيّر
             return Task.CompletedTask;
         }
 
@@ -109,11 +111,10 @@ namespace TawseeltekAPI.Hubs
         }
 
         // ================================
-        //  🚀 إرسال Batch التغييرات فقط (Delta)
+        //  🚀 إرسال Batch التغييرات فقط
         // ================================
         private static async Task BroadcastBatchUpdates()
         {
-            // لو ما في تغييرات، لا ترسل شيء
             var changes = new List<object>();
 
             foreach (var kv in _dirty.ToArray())
@@ -139,25 +140,21 @@ namespace TawseeltekAPI.Hubs
             if (changes.Count == 0)
                 return;
 
-            // تحويل Batch إلى JSON (أسرع من الإرسال واحد واحد)
             string json = JsonSerializer.Serialize(changes);
 
-            // ⚠️ ملاحظة مهمة جداً:
-            // لا نستطيع استعمال Clients هنا لأنه static
-            // لذلك نستخدم HubContext الذي سنمرره لخارج الهب
-            var hubContext = _hubContextRef;
-
+            var hubContext = HubContextRef;
             if (hubContext == null)
                 return;
 
-            // إرسال لجميع الأدمن
+            // إرسال للأدمن
             await hubContext.Clients.Group("admins")
                 .SendAsync("DriverLocationUpdatedBatch", json);
 
-            // إرسال كل سائق لمجموعته
+            // إرسال لكل سائق
             foreach (var change in changes)
             {
                 dynamic obj = change;
+
                 await hubContext.Clients.Group($"driver-{obj.driverId}")
                     .SendAsync("DriverLocationUpdatedBatch", json);
             }
