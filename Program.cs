@@ -26,7 +26,6 @@ builder.Services.AddSwaggerGen(c =>
         Description = "🚗 واجهة برمجية لتطبيق توصيلتك (Tawseeltek)"
     });
 
-    // ✅ JWT Auth في Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -34,7 +33,7 @@ builder.Services.AddSwaggerGen(c =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "أدخل التوكن بهذه الصيغة: **Bearer {your_token_here}**"
+        Description = "أدخل التوكن بهذه الصيغة: Bearer {token}"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -54,7 +53,7 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // =========================================================
-// ✅ قاعدة البيانات
+// ✅ Database
 // =========================================================
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -66,6 +65,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         var jwtSettings = builder.Configuration.GetSection("Jwt");
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -78,19 +78,20 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 Encoding.UTF8.GetBytes(jwtSettings["Key"]))
         };
 
-        // ✅ دعم SignalR WebSocket (Token in Query)
+        // 👇 دعم SignalR (token in WebSocket query)
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
                 var accessToken = context.Request.Query["access_token"];
                 var path = context.HttpContext.Request.Path;
+
                 if (!string.IsNullOrEmpty(accessToken) &&
-                  (path.StartsWithSegments("/hubs/location") || path.StartsWithSegments("/hubs/ride")))
+                    (path.StartsWithSegments("/hubs/location") ||
+                     path.StartsWithSegments("/hubs/ride")))
                 {
                     context.Token = accessToken;
                 }
-
 
                 return Task.CompletedTask;
             }
@@ -100,12 +101,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 // =========================================================
-// ✅ الخدمات المخصصة
+// ✅ Custom Services
 // =========================================================
 builder.Services.AddScoped<JwtService>();
 builder.Services.AddScoped<AppSettingsService>();
 builder.Services.AddHttpClient<FirebaseV1Service>();
-builder.Services.AddScoped<AzureBlobStorageService>(); // ✅ أضف هذا
+builder.Services.AddScoped<AzureBlobStorageService>();
 
 // =========================================================
 // ✅ SignalR
@@ -133,38 +134,29 @@ builder.Services.AddCors(options =>
 });
 
 // =========================================================
-// ✅ بناء التطبيق
+// ✅ Build App
 // =========================================================
 var app = builder.Build();
 
 // =========================================================
-// ✅ Middleware
+// 🔥 Turbo Fix — HubContext BEFORE MapHub (مهم جدًا)
+// =========================================================
+LocationHub.HubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
+RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
+
+// =========================================================
+// Middleware
 // =========================================================
 app.UseHttpsRedirection();
+app.UseRouting();
 
-// ✅ Swagger في جميع البيئات
 app.UseSwagger();
-app.UseSwaggerUI(c =>
-{
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Tawseeltek API v1");
-    c.DocumentTitle = "🚗 Tawseeltek API Docs";
-});
-
-// =========================================================
-// ✅ تحديد المسار الصحيح للملفات الثابتة
-// =========================================================
-var staticFilesRoot = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-
-// تأكد من وجود المجلد
-if (!Directory.Exists(staticFilesRoot))
-{
-    Directory.CreateDirectory(staticFilesRoot);
-    Console.WriteLine($"📁 تم إنشاء مجلد wwwroot تلقائيًا: {staticFilesRoot}");
-}
+app.UseSwaggerUI();
 
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new PhysicalFileProvider(staticFilesRoot),
+    FileProvider = new PhysicalFileProvider(
+        Path.Combine(Directory.GetCurrentDirectory(), "wwwroot")),
     RequestPath = "",
     OnPrepareResponse = ctx =>
     {
@@ -173,9 +165,6 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-// =========================================================
-// ✅ باقي الإعدادات
-// =========================================================
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -184,27 +173,22 @@ app.UseAuthorization();
 // ✅ SignalR Hubs
 // =========================================================
 app.MapHub<LocationHub>("/hubs/location");
-app.MapHub<RideHub>("/hubs/ride");app.MapHub<LocationHub>("/hubs/location");
 app.MapHub<RideHub>("/hubs/ride");
 
-// ✅ Turbo: ربط HubContext لإرسال الإشعارات من Controllers
-LocationHub.HubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
-RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
 // =========================================================
-// ✅ Controllers
+// Controllers
 // =========================================================
 app.MapControllers();
 
-// ✅ توجيه تلقائي إلى Swagger
 app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // =========================================================
-// ✅ تشفير كلمات المرور القديمة (مرة واحدة فقط)
+// 🔐 Encrypt old passwords (one-time)
 // =========================================================
 using (var scope = app.Services.CreateScope())
 {
     var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    var passwordHasher = new Microsoft.AspNetCore.Identity.PasswordHasher<TawseeltekAPI.Models.User>();
+    var hasher = new Microsoft.AspNetCore.Identity.PasswordHasher<TawseeltekAPI.Models.User>();
 
     var users = context.Users.ToList();
     bool updated = false;
@@ -213,7 +197,7 @@ using (var scope = app.Services.CreateScope())
     {
         if (!string.IsNullOrEmpty(user.PasswordHash) && user.PasswordHash.Length < 60)
         {
-            user.PasswordHash = passwordHasher.HashPassword(user, user.PasswordHash);
+            user.PasswordHash = hasher.HashPassword(user, user.PasswordHash);
             updated = true;
         }
     }
@@ -221,15 +205,15 @@ using (var scope = app.Services.CreateScope())
     if (updated)
     {
         context.SaveChanges();
-        Console.WriteLine("✅ تم تشفير كلمات المرور القديمة بنجاح.");
+        Console.WriteLine("✅ تم تحديث كلمات المرور القديمة.");
     }
     else
     {
-        Console.WriteLine("ℹ️ لا يوجد كلمات مرور تحتاج تحديث.");
+        Console.WriteLine("ℹ️ لا يوجد كلمات مرور تحتاج التحديث.");
     }
 }
 
 // =========================================================
-// ✅ تشغيل التطبيق
+// 🚀 Run App
 // =========================================================
 app.Run();
