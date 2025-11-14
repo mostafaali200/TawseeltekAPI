@@ -7,6 +7,7 @@ using TawseeltekAPI.Hubs; // 👈 Hub للإشعارات
 using TawseeltekAPI.Models;
 using TawseeltekAPI.Services;
 using TawseeltekAPI.Utils;
+using WebApplication1.Dto;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -168,6 +169,183 @@ public class RideController : ControllerBase
         });
     }
 
+    // ===========================================
+    // 🔥 FindBestDrivers TURBO — نسخة احترافية مثل Uber
+    // ===========================================
+    [HttpPost("FindBestDrivers")]
+    public async Task<IActionResult> FindBestDrivers([FromBody] FindDriversDTO dto)
+    {
+        if (dto == null)
+            return BadRequest("Invalid request.");
+
+        double passengerLat = dto.FromLat;
+        double passengerLng = dto.FromLng;
+        DateTime desiredTime = dto.DesiredTime;
+
+        // ===============================
+        // 1️⃣ تحديد المنطقة + المدى الأساسي
+        // ===============================
+        string area = DetectArea(passengerLat, passengerLng);
+
+        double baseRadiusKm = area switch
+        {
+            "Amman" => 7,
+            "Irbid" => 7,
+            "Zarqa" => 6,
+            "Aqaba" => 12,
+            "Valleys" => 18,
+            "Villages" => 20,
+            _ => 10
+        };
+
+        // ===============================
+        // 2️⃣ TIME SMART BOOST
+        // ===============================
+        int hour = desiredTime.Hour;
+
+        if (hour >= 7 && hour <= 10) baseRadiusKm *= 0.8;      // Morning Peak
+        else if (hour >= 16 && hour <= 19) baseRadiusKm *= 0.8; // Evening Peak
+        else if (hour >= 22 || hour <= 5) baseRadiusKm *= 1.7;  // Late Night
+        else baseRadiusKm *= 1.2;
+
+        // ===============================
+        // 3️⃣ جلب الرحلات الفعّالة
+        // ===============================
+        var activeRides = await _context.Rides
+            .Include(r => r.Driver)
+            .ThenInclude(d => d.User)
+            .Where(r =>
+                r.Status == "Active" &&
+                r.Driver.Verified &&
+                r.Driver.AvailabilityStatus == "Available" &&
+                r.Driver.Latitude != null &&
+                r.Driver.Longitude != null
+            )
+            .ToListAsync();
+
+        if (!activeRides.Any())
+            return Ok(new List<object>());
+
+        var result = new List<dynamic>();
+
+        // ===============================
+        // 4️⃣ Turbo Scoring System
+        // ===============================
+        foreach (var ride in activeRides)
+        {
+            var driver = ride.Driver;
+
+            // 4.1 — Distance Score (Turbo)
+            double distanceKm = GeoUtils.Haversine(
+                passengerLat, passengerLng,
+                driver.Latitude.Value, driver.Longitude.Value
+            );
+
+            if (distanceKm > baseRadiusKm)
+                continue;
+
+            double distanceScore =
+                distanceKm <= 2 ? 60 :
+                distanceKm <= 5 ? 40 :
+                distanceKm <= 10 ? 20 : 5;
+
+            // 4.2 — Time Score
+            double timeDiff = Math.Abs((ride.DepartureTime - desiredTime).TotalMinutes);
+
+            if (timeDiff > 90)
+                continue; // ⛔ لا نعرض رحلات الفارق بينها كبير
+
+            double timeScore =
+                timeDiff <= 10 ? 60 :
+                timeDiff <= 20 ? 40 :
+                timeDiff <= 45 ? 20 :
+                10;
+
+            // 4.3 — Direction Turbo Score
+            double directionScore = 0;
+
+            if (!string.IsNullOrEmpty(ride.RoutePolyline))
+            {
+                var path = PolylineDecoder.DecodePolyline(ride.RoutePolyline);
+                var distToPath = GeoUtils.DistanceToPolyline(passengerLat, passengerLng, path);
+
+                directionScore =
+                    distToPath <= 1 ? 50 :
+                    distToPath <= 3 ? 25 :
+                    10;
+            }
+
+            // 4.4 — Driver Freshness Boost (حديث النشاط)
+            double freshness = (DateTime.UtcNow - driver.LastUpdated).TotalMinutes;
+            double freshnessScore =
+                freshness <= 1 ? 15 :
+                freshness <= 3 ? 10 :
+                freshness <= 5 ? 5 : 0;
+
+            // 4.5 — TURBO FINAL SCORE
+            double finalScore = distanceScore + timeScore + directionScore + freshnessScore;
+
+            result.Add(new
+            {
+                ride.RideID,
+                ride.Driver.DriverID,
+                ride.Driver.User.FullName,
+                ride.Driver.VehicleType,
+                ride.Driver.PlateNumber,
+                driver.Latitude,
+                driver.Longitude,
+                RideDeparture = ride.DepartureTime,
+                DistanceKm = Math.Round(distanceKm, 2),
+                TimeDifference = Math.Round(timeDiff, 1),
+                Score = Math.Round(finalScore, 1)
+            });
+        }
+
+        // ===============================
+        // 5️⃣ توسيع المدى لو النتائج قليلة
+        // ===============================
+        if (result.Count < 3)
+        {
+            baseRadiusKm *= 1.8;
+        }
+
+        // ===============================
+        // 6️⃣ ترتيب حسب الأفضلية
+        // ===============================
+        var sorted = result
+            .OrderByDescending(r => r.Score)
+            .Take(20)
+            .ToList();
+
+        return Ok(sorted);
+    }
+
+
+
+    // ===========================================
+    // 🏙 Detect Area — متوافق مع الأردن بالكامل
+    // ===========================================
+    private string DetectArea(double lat, double lng)
+    {
+        if (lat > 31.7 && lat < 32.2 && lng > 35.7 && lng < 36.1)
+            return "Amman";
+
+        if (lat > 32.5 && lat < 32.7 && lng > 35.8 && lng < 36.1)
+            return "Irbid";
+
+        if (lat > 32.0 && lat < 32.15 && lng > 36.0 && lng < 36.2)
+            return "Zarqa";
+
+        if (lat > 29.4 && lat < 29.7 && lng > 34.9 && lng < 35.1)
+            return "Aqaba";
+
+        if (lng < 35.5)
+            return "Valleys";
+
+        return "Villages";
+    }
+
+
 
     // ===========================================
     // ✅ رفض راكب (من طرف السائق)
@@ -193,6 +371,7 @@ public class RideController : ControllerBase
                 status = "Rejected",
                 timestamp = DateTime.UtcNow
             });
+
 
         return Ok(new { ridePassenger.RidePassengerID, ridePassenger.Status });
     }

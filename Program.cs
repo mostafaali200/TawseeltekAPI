@@ -1,12 +1,13 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
 using TawseeltekAPI.Data;
-using TawseeltekAPI.Services;
 using TawseeltekAPI.Hubs;
+using TawseeltekAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -183,8 +184,12 @@ app.UseAuthorization();
 // ✅ SignalR Hubs
 // =========================================================
 app.MapHub<LocationHub>("/hubs/location");
+app.MapHub<RideHub>("/hubs/ride");app.MapHub<LocationHub>("/hubs/location");
 app.MapHub<RideHub>("/hubs/ride");
 
+// ✅ Turbo: ربط HubContext لإرسال الإشعارات من Controllers
+LocationHub._hubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
+RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
 // =========================================================
 // ✅ Controllers
 // =========================================================
