@@ -142,6 +142,7 @@ RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
 // Middleware (⚡ الترتيب الصحيح 100%)
 // =========================================================
 app.UseHttpsRedirection();
+app.UseWebSockets();  // ← أضف هذا
 
 // ⭐ يجب أن يكون قبل Authentication
 app.UseRouting();

@@ -173,177 +173,161 @@ public class RideController : ControllerBase
     // 🔥 FindBestDrivers TURBO — نسخة احترافية مثل Uber
     // ===========================================
     [HttpPost("FindBestDrivers")]
-    public async Task<IActionResult> FindBestDrivers([FromBody] FindDriversDTO dto)
+    public async Task<IActionResult> FindBestDriversTurbo([FromBody] FindDriversDTO dto)
     {
-        if (dto == null)
-            return BadRequest("Invalid request.");
+        if (dto == null) return BadRequest("Invalid request.");
 
-        double passengerLat = dto.FromLat;
-        double passengerLng = dto.FromLng;
+        double pLat = dto.FromLat;
+        double pLng = dto.FromLng;
         DateTime desiredTime = dto.DesiredTime;
 
-        // ===============================
-        // 1️⃣ تحديد المنطقة + المدى الأساسي
-        // ===============================
-        string area = DetectArea(passengerLat, passengerLng);
-
-        double baseRadiusKm = area switch
-        {
-            "Amman" => 7,
-            "Irbid" => 7,
-            "Zarqa" => 6,
-            "Aqaba" => 12,
-            "Valleys" => 18,
-            "Villages" => 20,
-            _ => 10
-        };
-
-        // ===============================
-        // 2️⃣ TIME SMART BOOST
-        // ===============================
-        int hour = desiredTime.Hour;
-
-        if (hour >= 7 && hour <= 10) baseRadiusKm *= 0.8;      // Morning Peak
-        else if (hour >= 16 && hour <= 19) baseRadiusKm *= 0.8; // Evening Peak
-        else if (hour >= 22 || hour <= 5) baseRadiusKm *= 1.7;  // Late Night
-        else baseRadiusKm *= 1.2;
-
-        // ===============================
-        // 3️⃣ جلب الرحلات الفعّالة
-        // ===============================
-        var activeRides = await _context.Rides
-            .Include(r => r.Driver)
-            .ThenInclude(d => d.User)
-            .Where(r =>
-                r.Status == "Active" &&
-                r.Driver.Verified &&
-                r.Driver.AvailabilityStatus == "Available" &&
-                r.Driver.Latitude != null &&
-                r.Driver.Longitude != null
+        // 🚀 1) جلب السائقين المتاحين
+        var drivers = await _context.Drivers
+            .Include(d => d.User)
+            .Include(d => d.Rides.Where(r => r.Status == "Active"))
+                .ThenInclude(r => r.RidePassengers)
+            .Where(d =>
+                d.Verified &&
+                d.AvailabilityStatus == "Available" &&
+                d.Latitude != null &&
+                d.Longitude != null
             )
             .ToListAsync();
 
-        if (!activeRides.Any())
+        if (!drivers.Any())
             return Ok(new List<object>());
+
+        // ⛔ لا تسمح بإرجاع صفر — نوسع النطاق تلقائيًا
+        double searchRadius = DetectInitialRadius(pLat, pLng, desiredTime);
 
         var result = new List<dynamic>();
 
-        // ===============================
-        // 4️⃣ Turbo Scoring System
-        // ===============================
-        foreach (var ride in activeRides)
+        foreach (var driver in drivers)
         {
-            var driver = ride.Driver;
-
-            // 4.1 — Distance Score (Turbo)
             double distanceKm = GeoUtils.Haversine(
-                passengerLat, passengerLng,
-                driver.Latitude.Value, driver.Longitude.Value
+                pLat, pLng,
+                driver.Latitude!.Value,
+                driver.Longitude!.Value
             );
 
-            if (distanceKm > baseRadiusKm)
-                continue;
+            if (distanceKm > searchRadius) continue;
 
+            // 🔎 تحديد الرحلة الحالية
+            var currentRide = driver.Rides.FirstOrDefault();
+
+            double timeScore = 40;
+            double directionScore = 40;
+            double rideLoadScore = 20;
+
+            if (currentRide != null)
+            {
+                // عدد الركاب معه الآن
+                int passengerCount = currentRide.RidePassengers.Count;
+                rideLoadScore = passengerCount switch
+                {
+                    0 => 20,
+                    1 => 15,
+                    2 => 10,
+                    3 => 5,
+                    _ => 0
+                };
+
+                // اتجاه مساره
+                if (!string.IsNullOrEmpty(currentRide.RoutePolyline))
+                {
+                    var path = PolylineDecoder.DecodePolyline(currentRide.RoutePolyline);
+                    var distToPath = GeoUtils.DistanceToPolyline(pLat, pLng, path);
+
+                    directionScore =
+                        distToPath <= 1 ? 50 :
+                        distToPath <= 3 ? 25 :
+                        5;
+                }
+
+                // الفرق الزمني
+                double diff = Math.Abs((currentRide.DepartureTime - desiredTime).TotalMinutes);
+                timeScore =
+                    diff <= 10 ? 50 :
+                    diff <= 20 ? 30 :
+                    diff <= 40 ? 15 : 5;
+            }
+            else
+            {
+                // سائق بدون رحلة — ممتاز
+                timeScore = 60;
+                directionScore = 60;
+                rideLoadScore = 30;
+            }
+
+            // قرب السائق
             double distanceScore =
                 distanceKm <= 2 ? 60 :
                 distanceKm <= 5 ? 40 :
-                distanceKm <= 10 ? 20 : 5;
+                distanceKm <= 10 ? 20 : 10;
 
-            // 4.2 — Time Score
-            double timeDiff = Math.Abs((ride.DepartureTime - desiredTime).TotalMinutes);
-
-            if (timeDiff > 90)
-                continue; // ⛔ لا نعرض رحلات الفارق بينها كبير
-
-            double timeScore =
-                timeDiff <= 10 ? 60 :
-                timeDiff <= 20 ? 40 :
-                timeDiff <= 45 ? 20 :
-                10;
-
-            // 4.3 — Direction Turbo Score
-            double directionScore = 0;
-
-            if (!string.IsNullOrEmpty(ride.RoutePolyline))
-            {
-                var path = PolylineDecoder.DecodePolyline(ride.RoutePolyline);
-                var distToPath = GeoUtils.DistanceToPolyline(passengerLat, passengerLng, path);
-
-                directionScore =
-                    distToPath <= 1 ? 50 :
-                    distToPath <= 3 ? 25 :
-                    10;
-            }
-
-            // 4.4 — Driver Freshness Boost (حديث النشاط)
-            double freshness = (DateTime.UtcNow - driver.LastUpdated).TotalMinutes;
+            // نشاط السائق
             double freshnessScore =
-                freshness <= 1 ? 15 :
-                freshness <= 3 ? 10 :
-                freshness <= 5 ? 5 : 0;
+                (DateTime.UtcNow - driver.LastUpdated).TotalMinutes <= 2 ? 20 : 5;
 
-            // 4.5 — TURBO FINAL SCORE
-            double finalScore = distanceScore + timeScore + directionScore + freshnessScore;
+            // ⭐ النتيجة النهائية
+            double finalScore =
+                timeScore +
+                directionScore +
+                rideLoadScore +
+                distanceScore +
+                freshnessScore;
 
             result.Add(new
             {
-                ride.RideID,
-                ride.Driver.DriverID,
-                ride.Driver.User.FullName,
-                ride.Driver.VehicleType,
-                ride.Driver.PlateNumber,
+                driver.DriverID,
+                driver.User.FullName,
+                driver.VehicleType,
+                driver.PlateNumber,
                 driver.Latitude,
                 driver.Longitude,
-                RideDeparture = ride.DepartureTime,
                 DistanceKm = Math.Round(distanceKm, 2),
-                TimeDifference = Math.Round(timeDiff, 1),
-                Score = Math.Round(finalScore, 1)
+                Score = Math.Round(finalScore, 2),
+                HasRide = currentRide != null
             });
         }
 
-        // ===============================
-        // 5️⃣ توسيع المدى لو النتائج قليلة
-        // ===============================
-        if (result.Count < 3)
+        // لو أقل من 5 نتائج → توسع تلقائي ذكي مرّة أخرى
+        if (!result.Any())
         {
-            baseRadiusKm *= 1.8;
+            searchRadius *= 2.5;
+            return await RetryWithNewRadius(searchRadius, dto);
         }
 
-        // ===============================
-        // 6️⃣ ترتيب حسب الأفضلية
-        // ===============================
-        var sorted = result
-            .OrderByDescending(r => r.Score)
-            .Take(20)
-            .ToList();
-
-        return Ok(sorted);
+        // ترتيب الأفضلية
+        return Ok(result.OrderByDescending(r => r.Score).Take(20));
     }
 
 
-
-    // ===========================================
-    // 🏙 Detect Area — متوافق مع الأردن بالكامل
-    // ===========================================
-    private string DetectArea(double lat, double lng)
+    // ==========================================================
+    // 🔥 ذكاء تحديد النطاق الأولي حسب المدينة والوقت
+    // ==========================================================
+    private double DetectInitialRadius(double lat, double lng, DateTime time)
     {
-        if (lat > 31.7 && lat < 32.2 && lng > 35.7 && lng < 36.1)
-            return "Amman";
+        double hour = time.Hour;
 
-        if (lat > 32.5 && lat < 32.7 && lng > 35.8 && lng < 36.1)
-            return "Irbid";
+        bool isNight = hour >= 22 || hour <= 6;
 
-        if (lat > 32.0 && lat < 32.15 && lng > 36.0 && lng < 36.2)
-            return "Zarqa";
-
-        if (lat > 29.4 && lat < 29.7 && lng > 34.9 && lng < 35.1)
-            return "Aqaba";
-
-        if (lng < 35.5)
-            return "Valleys";
-
-        return "Villages";
+        // 👇 الذكاء
+        if (isNight) return 15;         // الليل نوسع المدى
+        if (lng < 35.5) return 20;      // الأغوار والقرى
+        return 10;                      // المدن الرئيسية
     }
+
+    // ==========================================================
+    // 🔁 إعادة البحث بمدى أوسع تلقائيًا
+    // ==========================================================
+    private async Task<IActionResult> RetryWithNewRadius(double radius, FindDriversDTO dto)
+    {
+        // هنا تضع إعادة استدعاء نفس الدالة مع radius جديد
+        dto.SearchRadius = radius;
+        return await FindBestDriversTurbo(dto);
+    }
+
 
 
 

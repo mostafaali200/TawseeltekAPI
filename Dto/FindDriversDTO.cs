@@ -7,5 +7,7 @@
         public double ToLat { get; set; }
         public double ToLng { get; set; }
         public DateTime DesiredTime { get; set; }
+        public double SearchRadius { get; set; } = 0;
+
     }
 }
