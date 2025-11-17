@@ -2,21 +2,12 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
-using TawseeltekAPI.Data;
-using TawseeltekAPI.Models;
 
 namespace TawseeltekAPI.Hubs
 {
     [Authorize]
     public class LocationHub : Hub
     {
-        private readonly AppDbContext _context;
-
-        public LocationHub(AppDbContext context)
-        {
-            _context = context;
-        }
-
         // 🔥 هذا هو المرجع الذي سنملأه من Program.cs
         public static IHubContext<LocationHub>? HubContextRef { get; set; }
 
@@ -24,7 +15,7 @@ namespace TawseeltekAPI.Hubs
         private static readonly ConcurrentDictionary<int, (double Lat, double Lng, DateTime Ts)>
             _drivers = new();
 
-        // هل تغير موقع السائق؟ (لتقليل الإرسال)
+        // هل تغير موقع السائق؟
         private static readonly ConcurrentDictionary<int, bool> _dirty = new();
 
         // اتصالات المستخدمين
@@ -49,6 +40,7 @@ namespace TawseeltekAPI.Hubs
             1000);
         }
 
+        // عند الاتصال
         public override Task OnConnectedAsync()
         {
             _connections[Context.ConnectionId] = "connected";
@@ -64,22 +56,12 @@ namespace TawseeltekAPI.Hubs
         // ================================
         //  🧭 السائق يرسل موقعه
         // ================================
-        public async Task UpdateLocation(int driverId, double lat, double lng)
+        public Task UpdateLocation(int driverId, double lat, double lng)
         {
-            // تحديث بالذاكرة
             _drivers[driverId] = (lat, lng, DateTime.UtcNow);
             _dirty[driverId] = true;
 
-            // تحديث فعلي داخل قاعدة البيانات
-            var driver = await _context.Drivers.FindAsync(driverId);
-            if (driver != null)
-            {
-                driver.Latitude = lat;
-                driver.Longitude = lng;
-                driver.LastUpdated = DateTime.UtcNow;
-
-                await _context.SaveChangesAsync();
-            }
+            return Task.CompletedTask;
         }
 
         // ================================
@@ -126,7 +108,7 @@ namespace TawseeltekAPI.Hubs
         }
 
         // ================================
-        //  🚀 Broadcast فقط التغييرات
+        //  🚀 إرسال التغييرات فقط
         // ================================
         private static async Task BroadcastBatchUpdates()
         {
