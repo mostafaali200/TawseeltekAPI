@@ -2,12 +2,21 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using TawseeltekAPI.Data;
+using TawseeltekAPI.Models;
 
 namespace TawseeltekAPI.Hubs
 {
     [Authorize]
     public class LocationHub : Hub
     {
+        private readonly AppDbContext _context;
+
+        public LocationHub(AppDbContext context)
+        {
+            _context = context;
+        }
+
         // 🔥 هذا هو المرجع الذي سنملأه من Program.cs
         public static IHubContext<LocationHub>? HubContextRef { get; set; }
 
@@ -24,10 +33,6 @@ namespace TawseeltekAPI.Hubs
         // مؤقّت لإرسال Batch كل 1 ثانية
         private static readonly Timer _batchTimer;
 
-        // إعدادات JSON
-        private static readonly JsonSerializerOptions _jsonOptions =
-            new JsonSerializerOptions { WriteIndented = false };
-
         static LocationHub()
         {
             _batchTimer = new Timer(async _ =>
@@ -40,11 +45,10 @@ namespace TawseeltekAPI.Hubs
                 catch { }
             },
             null,
-            1000,   // يبدأ بعد ثانية
-            1000);  // يرسل كل ثانية
+            1000,
+            1000);
         }
 
-        // عند اتصال مستخدم
         public override Task OnConnectedAsync()
         {
             _connections[Context.ConnectionId] = "connected";
@@ -58,13 +62,24 @@ namespace TawseeltekAPI.Hubs
         }
 
         // ================================
-        //  🧭 السائق يحدث موقعه
+        //  🧭 السائق يرسل موقعه
         // ================================
-        public Task UpdateLocation(int driverId, double lat, double lng)
+        public async Task UpdateLocation(int driverId, double lat, double lng)
         {
+            // تحديث بالذاكرة
             _drivers[driverId] = (lat, lng, DateTime.UtcNow);
-            _dirty[driverId] = true; // علامة أن الموقع تغيّر
-            return Task.CompletedTask;
+            _dirty[driverId] = true;
+
+            // تحديث فعلي داخل قاعدة البيانات
+            var driver = await _context.Drivers.FindAsync(driverId);
+            if (driver != null)
+            {
+                driver.Latitude = lat;
+                driver.Longitude = lng;
+                driver.LastUpdated = DateTime.UtcNow;
+
+                await _context.SaveChangesAsync();
+            }
         }
 
         // ================================
@@ -111,7 +126,7 @@ namespace TawseeltekAPI.Hubs
         }
 
         // ================================
-        //  🚀 إرسال Batch التغييرات فقط
+        //  🚀 Broadcast فقط التغييرات
         // ================================
         private static async Task BroadcastBatchUpdates()
         {
@@ -143,14 +158,13 @@ namespace TawseeltekAPI.Hubs
             string json = JsonSerializer.Serialize(changes);
 
             var hubContext = HubContextRef;
-            if (hubContext == null)
-                return;
+            if (hubContext == null) return;
 
             // إرسال للأدمن
             await hubContext.Clients.Group("admins")
                 .SendAsync("DriverLocationUpdatedBatch", json);
 
-            // إرسال لكل سائق
+            // إرسال للراكب المشترك مع سائق محدد
             foreach (var change in changes)
             {
                 dynamic obj = change;
@@ -161,7 +175,7 @@ namespace TawseeltekAPI.Hubs
         }
 
         // ================================
-        //  ⚠️ كشف السائق المتوقف
+        //  ⚠️ تنظيف السائقين المتوقفين
         // ================================
         private static void CleanupInactiveDrivers()
         {
