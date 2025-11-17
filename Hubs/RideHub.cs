@@ -8,16 +8,16 @@ namespace TawseeltekAPI.Hubs
     [Authorize]
     public class RideHub : Hub
     {
-        // 🧠 مرجع HubContext للإرسال من الخارج (RideController)
+        // 👉 HubContext لكي نرسل من Controller
         public static IHubContext<RideHub>? HubContextRef;
 
-        // 🔌 ربط ConnectionId بالراكب
+        // 👉 ربط connectionId بالراكب
         private static readonly ConcurrentDictionary<string, int> _passengerConnections = new();
 
-        // 🔥 Buffer لتجميع الإشعارات (Batch)
+        // 👉 تجميع الإشعارات قبل إرسالها (Batch)
         private static readonly ConcurrentDictionary<int, List<object>> _pendingNotifications = new();
 
-        // ⏱️ مؤقت لإرسال Batch كل 1 ثانية
+        // 👉 مؤقت يقوم بإرسال Batch كل ثانية
         private static readonly Timer _batchTimer;
 
         static RideHub()
@@ -28,34 +28,39 @@ namespace TawseeltekAPI.Hubs
                 TimeSpan.FromSeconds(1));
         }
 
-        // 🔌 عند الاتصال
+        // عند الاتصال
         public override Task OnConnectedAsync()
         {
             return base.OnConnectedAsync();
         }
 
-        // 🔌 عند الانفصال
+        // عند الانفصال
         public override Task OnDisconnectedAsync(Exception? exception)
         {
             _passengerConnections.TryRemove(Context.ConnectionId, out _);
             return base.OnDisconnectedAsync(exception);
         }
 
-        // ✔ الراكب يشترك ليستقبل إشعارات تخصه
+        // ======================================================
+        // 🟦 اشتراك الراكب
+        // ======================================================
         public async Task SubscribePassenger(int passengerId)
         {
             _passengerConnections[Context.ConnectionId] = passengerId;
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"passenger-{passengerId}");
 
-            await Clients.Caller.SendAsync("SubscribedToPassenger", new
+            // ❗❗ event name يجب أن يكون camelCase
+            await Clients.Caller.SendAsync("subscribedToPassenger", new
             {
                 passengerId,
-                message = "✅ تم الاشتراك في الرحلات (Turbo Mode)"
+                message = "تم الاشتراك بنجاح 🚀"
             });
         }
 
-        // 🔔 إشعار الرحلة → يتم تخزينه مؤقتًا (Batch/Guarantee)
+        // ======================================================
+        // 🔔 إضافة إشعار إلى Buffer
+        // ======================================================
         public async Task NotifyPassenger(int passengerId, string status, int rideId)
         {
             var payload = new
@@ -66,7 +71,6 @@ namespace TawseeltekAPI.Hubs
                 timestamp = DateTime.UtcNow
             };
 
-            // حفظ في الذاكرة
             _pendingNotifications.AddOrUpdate(
                 passengerId,
                 _ => new List<object> { payload },
@@ -77,7 +81,9 @@ namespace TawseeltekAPI.Hubs
                 });
         }
 
-        // 🚀 إرسال الـ Batch كل ثانية
+        // ======================================================
+        // 🚀 إرسال الإشعارات على شكل Batch
+        // ======================================================
         private static async Task FlushBatchAsync()
         {
             if (_pendingNotifications.Count == 0)
@@ -91,21 +97,21 @@ namespace TawseeltekAPI.Hubs
                 int passengerId = kv.Key;
                 var events = kv.Value;
 
-                if (events.Count == 0)
-                    continue;
+                if (events.Count == 0) continue;
 
-                // تحويل إلى JSON (أخف وأسرع)
                 string json = JsonSerializer.Serialize(events);
 
+                // ❗❗ event name camelCase وإلا الموبايل لا يجد الحدث
                 await hub.Clients.Group($"passenger-{passengerId}")
-                    .SendAsync("RideStatusUpdatedBatch", json);
+                    .SendAsync("rideStatusUpdatedBatch", json);
 
-                // إفراغ بعد الإرسال
                 _pendingNotifications[passengerId] = new List<object>();
             }
         }
 
-        // 🎯 دالة جاهزة للإرسال من RideController
+        // ======================================================
+        // 🎯 استدعاء جاهز من RideController
+        // ======================================================
         public static async Task PushFromController(int passengerId, string status, int rideId)
         {
             if (HubContextRef == null)
