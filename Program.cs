@@ -78,7 +78,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 Encoding.UTF8.GetBytes(jwtSettings["Key"]))
         };
 
-        // 👇 دعم SignalR (token in WebSocket query)
+        // 👇 دعم SignalR (token via WebSocket Query)
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -114,45 +114,50 @@ builder.Services.AddScoped<AzureBlobStorageService>();
 builder.Services.AddSignalR();
 
 // =========================================================
-// ✅ CORS
+// ✅ CORS (يدعم React + React Native + Expo + Web)
 // =========================================================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy
-            .WithOrigins(
-                "http://localhost:5173",
-                "https://tawseeltek.netlify.app",
-                "https://mostafaalidragmeh.github.io",
-                "https://tawseeltek.onrender.com"
-            )
+            .AllowAnyOrigin()        // ← مهم للموبايل
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
     });
 });
 
 // =========================================================
-// ✅ Build App
+// Build App
 // =========================================================
 var app = builder.Build();
 
 // =========================================================
-// 🔥 Turbo Fix — HubContext BEFORE MapHub (مهم جدًا)
+// 🔥 Turbo Fix — HubContext BEFORE MapHub
 // =========================================================
 LocationHub.HubContextRef = app.Services.GetRequiredService<IHubContext<LocationHub>>();
 RideHub.HubContextRef = app.Services.GetRequiredService<IHubContext<RideHub>>();
 
 // =========================================================
-// Middleware
+// Middleware (⚡ الترتيب الصحيح 100%)
 // =========================================================
 app.UseHttpsRedirection();
+
+// ⭐ يجب أن يكون قبل Authentication
 app.UseRouting();
 
+// ⭐ هنا بالضبط مكان CORS
+app.UseCors("AllowFrontend");
+
+// ⭐ بعد CORS
+app.UseAuthentication();
+app.UseAuthorization();
+
+// Swagger
 app.UseSwagger();
 app.UseSwaggerUI();
 
+// Static Files
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(
@@ -165,12 +170,8 @@ app.UseStaticFiles(new StaticFileOptions
     }
 });
 
-app.UseCors("AllowFrontend");
-app.UseAuthentication();
-app.UseAuthorization();
-
 // =========================================================
-// ✅ SignalR Hubs
+// SignalR Hubs
 // =========================================================
 app.MapHub<LocationHub>("/hubs/location");
 app.MapHub<RideHub>("/hubs/ride");
@@ -180,10 +181,11 @@ app.MapHub<RideHub>("/hubs/ride");
 // =========================================================
 app.MapControllers();
 
+// Redirect "/"
 app.MapGet("/", () => Results.Redirect("/swagger"));
 
 // =========================================================
-// 🔐 Encrypt old passwords (one-time)
+// 🔐 Encrypt Old Passwords (One-time)
 // =========================================================
 using (var scope = app.Services.CreateScope())
 {
@@ -214,6 +216,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 // =========================================================
-// 🚀 Run App
+// Run App
 // =========================================================
 app.Run();
