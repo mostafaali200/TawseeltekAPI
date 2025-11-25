@@ -8,7 +8,6 @@ namespace TawseeltekAPI.Models
         public string PhoneNumber { get; set; }
         public DateTime? BirthDate { get; set; }
         public string Role { get; set; } // Admin / Supervisor / Driver / Passenger
-        public string PasswordHash { get; set; }
         public string Status { get; set; } = "Pending"; // Pending / Active / Suspended / Banned
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
