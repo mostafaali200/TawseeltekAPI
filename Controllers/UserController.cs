@@ -74,130 +74,59 @@ namespace TawseeltekAPI.Controllers
             }
         }
 
-        // -----------------------------
-        // 📱 إرسال كود التحقق (OTP يدوي)
-        // -----------------------------
-        [HttpPost("SendVerificationCode")]
-        [AllowAnonymous]
-        public async Task<IActionResult> SendVerificationCode([FromBody] string phoneNumber)
-        {
-            if (string.IsNullOrEmpty(phoneNumber))
-                return BadRequest("يرجى إدخال رقم الهاتف.");
 
-            if (await _context.Users.AnyAsync(u => u.PhoneNumber == phoneNumber))
-                return BadRequest("هذا الرقم مسجل مسبقًا.");
-
-            var random = new Random();
-            var code = random.Next(100000, 999999).ToString();
-
-            // حذف الأكواد القديمة لنفس الرقم
-            var oldCodes = _context.PhoneVerifications.Where(v => v.PhoneNumber == phoneNumber);
-            _context.PhoneVerifications.RemoveRange(oldCodes);
-
-            _context.PhoneVerifications.Add(new PhoneVerification
-            {
-                PhoneNumber = phoneNumber,
-                Code = code,
-                ExpiryTime = DateTime.UtcNow.AddMinutes(10),
-                IsVerified = false
-            });
-            await _context.SaveChangesAsync();
-
-            // 👀 عرض الكود في Console حتى ترسله يدويًا
-            Console.WriteLine($"📲 كود التحقق لرقم {phoneNumber} هو: {code}");
-
-            return Ok(new { message = "✅ تم إنشاء كود التحقق. أرسله يدويًا عبر واتساب." });
-        }
-
-        // -----------------------------
-        // ✅ التحقق من الكود
-        // -----------------------------
-        [HttpPost("VerifyCode")]
-        [AllowAnonymous]
-        public async Task<IActionResult> VerifyCode([FromBody] VerifyCodeDTO dto)
-        {
-            if (string.IsNullOrEmpty(dto.PhoneNumber) || string.IsNullOrEmpty(dto.Code))
-                return BadRequest("❌ رقم الهاتف أو الكود غير موجود.");
-
-            var verification = await _context.PhoneVerifications
-                .FirstOrDefaultAsync(v => v.PhoneNumber == dto.PhoneNumber && v.Code == dto.Code);
-
-            if (verification == null)
-                return BadRequest("❌ الكود غير صحيح.");
-
-            if (verification.ExpiryTime < DateTime.UtcNow)
-                return BadRequest("⚠️ الكود منتهي الصلاحية.");
-
-            verification.IsVerified = true;
-            await _context.SaveChangesAsync();
-
-            return Ok(new { message = "✅ تم التحقق بنجاح، يمكنك الآن التسجيل." });
-        }
         [HttpPost("RegisterPassenger")]
         [AllowAnonymous]
         public async Task<ActionResult<object>> RegisterPassenger([FromBody] UserRegisterDTO dto)
         {
-            // ✅ تحقق من رقم الهاتف
+            // تحقق من رقم الهاتف
             if (await _context.Users.AnyAsync(u => u.PhoneNumber == dto.PhoneNumber))
                 return BadRequest("رقم الهاتف مستخدم مسبقًا.");
 
-            // ✅ تحقق من الكود (تم التحقق من رقم الهاتف)
-            var verified = await _context.PhoneVerifications
-                .FirstOrDefaultAsync(v => v.PhoneNumber == dto.PhoneNumber && v.IsVerified);
-            if (verified == null)
-                return BadRequest("❌ يجب التحقق من رقم الهاتف قبل التسجيل.");
-
-            // ✅ تحقق من كود الإحالة إذا تم إدخاله
+            // تحقق من كود الإحالة إذا موجود
             if (!string.IsNullOrEmpty(dto.ReferralCode))
             {
                 var referrer = await _context.Users
                     .FirstOrDefaultAsync(u => u.ReferralCode == dto.ReferralCode);
 
                 if (referrer == null)
-                    return BadRequest("❌ كود الإحالة غير صالح، يرجى التأكد من صحته.");
+                    return BadRequest("❌ كود الإحالة غير صالح.");
             }
 
-            // ✅ إنشاء المستخدم الجديد
+            // تسجيل الراكب بدون كود تفعيل
             var user = new User
             {
                 FullName = dto.FullName,
                 PhoneNumber = dto.PhoneNumber,
                 BirthDate = DateTime.TryParse(dto.BirthDate, out var bd) ? bd : (DateTime?)null,
                 Role = "Passenger",
-                Status = "PendingActivation",
+                Status = "PendingApproval",  // 🔥 التغيير الوحيد المهم
                 CreatedAt = DateTime.UtcNow,
                 ReferralCode = GenerateReferralCode(),
                 ReferredBy = dto.ReferralCode
             };
 
-
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // ✅ إضافة سجل الراكب
-            var passenger = new Passenger
+            // إضافة سجل Passenger
+            _context.Passengers.Add(new Passenger
             {
                 UserID = user.UserID,
                 Balance = 0m
-            };
-            _context.Passengers.Add(passenger);
+            });
             await _context.SaveChangesAsync();
 
-            // ✅ معالجة المكافأة (إن وُجد كود إحالة)
+            // مكافأة الإحالة
             await HandleReferralRewardAsync(dto.ReferralCode, user.FullName);
 
-            // ✅ الاستجابة
             return Ok(new
             {
-                userID = user.UserID,
-                fullName = user.FullName,
-                phoneNumber = user.PhoneNumber,
-                role = user.Role,
-                referralCode = user.ReferralCode,
-                referredBy = user.ReferredBy,
-                balance = passenger.Balance
+                message = "تم تسجيل الراكب ويحتاج موافقة المشرف.",
+                userID = user.UserID
             });
         }
+
 
         // -----------------------------
         // 🧑‍💼 تسجيل مسؤول جديد (Admin)
@@ -226,8 +155,6 @@ namespace TawseeltekAPI.Controllers
             return CreatedAtAction(nameof(GetUser), new { id = user.UserID }, user);
         }
 
-
-
         // -----------------------------
         // 🔑 تسجيل الدخول
         // -----------------------------
@@ -235,19 +162,46 @@ namespace TawseeltekAPI.Controllers
         [AllowAnonymous]
         public async Task<ActionResult<object>> Login([FromBody] UserLoginDTO dto)
         {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+
             if (user == null)
                 return Unauthorized(new { message = "❌ رقم الهاتف أو كلمة المرور غير صحيحة." });
 
-            if (user.Status != "Active")
-                return Unauthorized(new { message = "⚠️ الحساب غير مفعل أو موقوف." });
+            // 🔒 حماية إضافية: لا يوجد كلمة مرور مخزّنة
+            if (string.IsNullOrEmpty(user.PasswordHash))
+            {
+                return Unauthorized(new
+                {
+                    message = "⚠️ يجب تفعيل الحساب وتعيين كلمة مرور قبل تسجيل الدخول."
+                });
+            }
 
+            // ⛔ التحقق من حالة الحساب
+            if (user.Status != "Active")
+            {
+                return Unauthorized(new
+                {
+                    message = user.Status switch
+                    {
+                        "PendingApproval" => "⚠️ بانتظار موافقة المشرف.",
+                        "PendingActivation" => "⚠️ يرجى إدخال رمز التفعيل.",
+                        "PendingPassword" => "⚠️ يرجى تعيين كلمة مرور جديدة.",
+                        "Suspended" => "⛔ الحساب موقوف.",
+                        _ => "⚠️ لا يمكن تسجيل الدخول الآن."
+                    }
+                });
+            }
+
+            // التحقق من كلمة المرور
             var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, dto.Password);
             if (result == PasswordVerificationResult.Failed)
                 return Unauthorized(new { message = "❌ رقم الهاتف أو كلمة المرور غير صحيحة." });
 
+            // JWT
             var token = _jwt.GenerateToken(user.UserID, user.FullName, user.Role);
 
+            // جلب DriverID إذا كان سائق
             int? driverId = null;
             if (user.Role == "Driver")
             {
@@ -300,25 +254,30 @@ namespace TawseeltekAPI.Controllers
         }
 
         // -----------------------------
-        // 📜 جميع أكواد التحقق (لعرضها في لوحة التحكم)
+        // 📜 جميع أكواد التفعيل (لعرضها في لوحة التحكم)
         // -----------------------------
         [HttpGet("AllVerifications")]
         [Authorize(Roles = "Admin,Supervisor")]
         public async Task<IActionResult> GetAllVerifications()
         {
-            var data = await _context.PhoneVerifications
+            var data = await _context.VerificationTokens
                 .OrderByDescending(v => v.ExpiryTime)
                 .Select(v => new
                 {
-                    v.PhoneNumber,
+                    v.UserId,
+                    PhoneNumber = _context.Users
+                        .Where(u => u.UserID == v.UserId)
+                        .Select(u => u.PhoneNumber)
+                        .FirstOrDefault(),
                     v.Code,
-                    v.IsVerified,
+                    v.IsUsed,
                     v.ExpiryTime
                 })
                 .ToListAsync();
 
             return Ok(data);
         }
+
 
         // -----------------------------
         // باقي الدوال بدون أي تعديل

@@ -75,44 +75,42 @@ namespace TawseeltekAPI.Controllers
                 await _context.SaveChangesAsync();
             }
         }
-
-        // 🧍‍♂️ تسجيل سائق جديد
+        //تسجيل سائق جديد
         [HttpPost("RegisterDriver")]
-        public async Task<ActionResult<DriverDTO>> RegisterDriver([FromForm] DriverRegisterDTO dto)
+        [AllowAnonymous]
+        public async Task<IActionResult> RegisterDriver([FromForm] DriverRegisterDTO dto)
         {
-            if (string.IsNullOrWhiteSpace(dto.PhoneNumber) ||
-                dto.PhoneNumber.Length != 10 ||
-                !dto.PhoneNumber.All(char.IsDigit))
-                return BadRequest("رقم الهاتف يجب أن يتكون من 10 أرقام صحيحة فقط.");
-
+            // التحقق من رقم الهاتف
             if (await _context.Users.AnyAsync(u => u.PhoneNumber == dto.PhoneNumber))
                 return BadRequest("رقم الهاتف مستخدم مسبقًا.");
 
+            // التحقق من كود الإحالة
             if (!string.IsNullOrEmpty(dto.ReferralCode))
             {
                 var validReferral = await _context.Users
                     .AnyAsync(u => u.ReferralCode == dto.ReferralCode);
                 if (!validReferral)
-                    return BadRequest("رمز الإحالة غير موجود.");
+                    return BadRequest("❌ كود الإحالة غير صالح.");
             }
 
+            // إنشاء المستخدم
             var user = new User
             {
                 FullName = dto.FullName,
                 PhoneNumber = dto.PhoneNumber,
                 BirthDate = DateTime.TryParse(dto.BirthDate, out var bd) ? bd : (DateTime?)null,
                 Role = "Driver",
-                Status = "Pending",
+                Status = "PendingApproval",   // 🔥 مثل الراكب 100%
                 CreatedAt = DateTime.UtcNow,
                 ReferralCode = GenerateReferralCode(),
-                ReferredBy = dto.ReferralCode
+                ReferredBy = dto.ReferralCode,
+                PasswordHash = null           // ❗ بدون كلمة مرور الآن
             };
 
-            user.PasswordHash = _passwordHasher.HashPassword(user, dto.PasswordHash);
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            // ✅ دالة حفظ الملفات إلى Azure
+            // رفع الملفات على Azure
             async Task<string> SaveFileAsync(IFormFile file, string folder)
             {
                 if (file == null) return null;
@@ -136,25 +134,39 @@ namespace TawseeltekAPI.Controllers
 
             _context.Drivers.Add(driver);
             await _context.SaveChangesAsync();
+
+            // مكافأة الإحالة
             await HandleReferralRewardAsync(dto.ReferralCode, user.FullName);
 
-            return CreatedAtAction(nameof(GetDriver), new { id = driver.DriverID }, new DriverDTO
+            return Ok(new
             {
-                DriverID = driver.DriverID,
-                FullName = user.FullName,
-                PhoneNumber = user.PhoneNumber,
-                VehicleType = driver.VehicleType,
-                PlateNumber = driver.PlateNumber,
-                ModelYear = driver.ModelYear,
-                Balance = driver.Balance,
-                AvailabilityStatus = driver.AvailabilityStatus,
-                Verified = driver.Verified,
-                ProfileImage = driver.ProfileImage,
-                LicenseImage = driver.LicenseImage,
-                VehicleLicenseImage = driver.VehicleLicenseImage,
-                ReferralCode = user.ReferralCode
+                message = "تم تسجيل السائق ويحتاج موافقة المشرف.",
+                userID = user.UserID,
+                driverID = driver.DriverID
             });
         }
+
+        [HttpPost("SetDriverPassword")]
+        [AllowAnonymous]
+        public async Task<IActionResult> SetDriverPassword([FromBody] ResetPasswordDTO dto)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber && u.Role == "Driver");
+
+            if (user == null)
+                return BadRequest("رقم الهاتف غير موجود.");
+
+            if (user.Status != "PendingPassword")
+                return BadRequest("❌ لا يمكن تعيين كلمة المرور الآن.");
+
+            user.PasswordHash = _passwordHasher.HashPassword(user, dto.NewPassword);
+            user.Status = "Active";   // 🔥 النهاية
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🔐 تم تعيين كلمة المرور بنجاح والحساب أصبح فعالًا." });
+        }
+
 
         // ✏️ تعديل بيانات السائق
         [HttpPut("UpdateDriver/{id}")]
@@ -219,28 +231,9 @@ namespace TawseeltekAPI.Controllers
 
             return Ok(new { driver.DriverID, driver.AvailabilityStatus });
         }
-        [HttpPost("ActivateAccount")]
-        [AllowAnonymous]
-        public async Task<IActionResult> ActivateAccount([FromBody] ActivationDTO dto)
-        {
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
-            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
 
-            var token = await _context.VerificationTokens
-                .FirstOrDefaultAsync(t => t.UserId == user.UserID && t.Code == dto.Code && !t.IsUsed);
 
-            if (token == null) return BadRequest("رمز التفعيل غير صحيح.");
-            if (token.ExpiryTime < DateTime.UtcNow) return BadRequest("انتهت صلاحية الرمز.");
-
-            token.IsUsed = true;
-            user.Status = "Active";
-
-            await _context.SaveChangesAsync();
-
-            return Ok(new { message = "🎉 تم تفعيل الحساب. يرجى تعيين كلمة مرور جديدة." });
-        }
-
-        [HttpPost("SetNewPassword")]
+        [HttpPost("SetDriverPassword")]
         [AllowAnonymous]
         public async Task<IActionResult> SetNewPassword([FromBody] ResetPasswordDTO dto)
         {
@@ -253,21 +246,29 @@ namespace TawseeltekAPI.Controllers
             return Ok(new { message = "🔐 تم تعيين كلمة مرور جديدة بنجاح." });
         }
 
-
         // الموافقة والتحقق من السائق
-        [HttpPut("VerifyDriver/{id}")]
-        public async Task<IActionResult> VerifyDriver(int id)
+        [HttpPost("VerifyDriver/{driverId}")]
+        [Authorize(Roles = "Admin,Supervisor")]
+        public async Task<IActionResult> VerifyDriver(int driverId)
         {
-            var driver = await _context.Drivers.Include(d => d.User)
-                                               .FirstOrDefaultAsync(d => d.DriverID == id);
-            if (driver == null) return NotFound("Driver not found.");
+            var driver = await _context.Drivers
+                .Include(d => d.User)
+                .FirstOrDefaultAsync(d => d.DriverID == driverId);
 
+            if (driver == null)
+                return NotFound("السائق غير موجود.");
+
+            // تحديث حالة السائق
             driver.Verified = true;
-            driver.AvailabilityStatus = "Available";
-            driver.User.Status = "PendingActivation"; // الحساب يحتاج تفعيل بالكود
+            driver.User.Status = "PendingActivation";   // 🔥 نفس الراكب 100%
             await _context.SaveChangesAsync();
 
-            // 🔥 إنشاء رمز تفعيل
+            // حذف الرموز القديمة
+            var oldTokens = _context.VerificationTokens
+                .Where(t => t.UserId == driver.UserID);
+            _context.VerificationTokens.RemoveRange(oldTokens);
+
+            // توليد رمز جديد
             var code = new Random().Next(100000, 999999).ToString();
 
             var token = new VerificationToken
@@ -281,12 +282,14 @@ namespace TawseeltekAPI.Controllers
             _context.VerificationTokens.Add(token);
             await _context.SaveChangesAsync();
 
-            // ❗ عرض الكود في الـ Console ليظهر للمشرف
-            Console.WriteLine($"🔥 رمز تفعيل السائق {driver.User.FullName} هو: {code}");
+            Console.WriteLine($"🔥 رمز تفعيل السائق {driver.User.FullName}: {code}");
 
-            return Ok(new { message = "تم التحقق من السائق. رمز التفعيل جاهز." });
+            return Ok(new
+            {
+                message = "تمت الموافقة على السائق وتم إنشاء رمز التفعيل.",
+                code
+            });
         }
-
 
         // تعديل رصيد السائق
         [HttpPut("UpdateBalance/{id}")]
@@ -325,6 +328,31 @@ namespace TawseeltekAPI.Controllers
                 VehicleLicenseImage = driver.VehicleLicenseImage,
                 ReferralCode = driver.User.ReferralCode
             };
+        }
+        [HttpPost("ActivateDriver")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ActivateDriver([FromBody] ActivationDTO dto)
+        {
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber && u.Role == "Driver");
+
+            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
+
+            var token = await _context.VerificationTokens
+                .FirstOrDefaultAsync(t => t.UserId == user.UserID && t.Code == dto.Code && !t.IsUsed);
+
+            if (token == null)
+                return BadRequest("❌ رمز التفعيل غير صحيح.");
+
+            if (token.ExpiryTime < DateTime.UtcNow)
+                return BadRequest("⏳ انتهت صلاحية الرمز.");
+
+            // تفعيل الرمز
+            token.IsUsed = true;
+            user.Status = "PendingPassword";  // 🔥 نفس منطق الراكب
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🎉 تم التفعيل. يرجى تعيين كلمة مرور جديدة." });
         }
 
         // التصفح والبحث
