@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using TawseeltekAPI.Models;
+using WebApplication1.Models;
 
 namespace TawseeltekAPI.Data
 {
@@ -21,6 +22,8 @@ namespace TawseeltekAPI.Data
         public DbSet<UserDevice> UserDevices { get; set; }
         public DbSet<AppSetting> AppSettings { get; set; }
         public DbSet<PhoneVerification> PhoneVerifications { get; set; }
+        public DbSet<VerificationToken> VerificationTokens { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

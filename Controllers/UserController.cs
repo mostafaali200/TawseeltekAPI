@@ -164,13 +164,12 @@ namespace TawseeltekAPI.Controllers
                 PhoneNumber = dto.PhoneNumber,
                 BirthDate = DateTime.TryParse(dto.BirthDate, out var bd) ? bd : (DateTime?)null,
                 Role = "Passenger",
-                Status = "Active",
+                Status = "PendingActivation",
                 CreatedAt = DateTime.UtcNow,
                 ReferralCode = GenerateReferralCode(),
                 ReferredBy = dto.ReferralCode
             };
 
-            user.PasswordHash = _passwordHasher.HashPassword(user, dto.PasswordHash);
 
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
@@ -468,6 +467,85 @@ namespace TawseeltekAPI.Controllers
                 return StatusCode(500, new { message = "❌ خطأ أثناء عملية الحذف.", details = ex.Message });
             }
         }
+
+
+        // -------------------------------------------------------
+        // 🟢 1) توليد رمز تفعيل من المشرف
+        // -------------------------------------------------------
+        [HttpPost("GenerateActivationCode/{userId}")]
+        [Authorize(Roles = "Admin,Supervisor")]
+        public async Task<IActionResult> GenerateActivationCode(int userId)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.UserID == userId);
+            if (user == null) return NotFound("المستخدم غير موجود.");
+
+            var code = new Random().Next(100000, 999999).ToString();
+
+            // حذف الأكواد القديمة
+            var oldTokens = _context.VerificationTokens.Where(t => t.UserId == userId);
+            _context.VerificationTokens.RemoveRange(oldTokens);
+
+            // إنشاء رمز جديد
+            var token = new VerificationToken
+            {
+                UserId = userId,
+                Code = code,
+                ExpiryTime = DateTime.UtcNow.AddMinutes(30),
+                IsUsed = false
+            };
+
+            _context.VerificationTokens.Add(token);
+            await _context.SaveChangesAsync();
+
+            Console.WriteLine($"🔥 رمز تفعيل الراكب {user.FullName}: {code}");
+
+            return Ok(new { message = "تم إنشاء رمز التفعيل", code });
+        }
+
+        // -------------------------------------------------------
+        // 🟢 2) تفعيل الحساب من قبل المستخدم
+        // -------------------------------------------------------
+        [HttpPost("ActivateAccount")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ActivateAccount([FromBody] ActivationDTO dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
+
+            var token = await _context.VerificationTokens
+                .FirstOrDefaultAsync(t => t.UserId == user.UserID && t.Code == dto.Code && !t.IsUsed);
+
+            if (token == null) return BadRequest("رمز التفعيل غير صحيح.");
+            if (token.ExpiryTime < DateTime.UtcNow) return BadRequest("انتهت صلاحية الرمز.");
+
+            token.IsUsed = true;
+            user.Status = "PendingPassword";
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🎉 تم تفعيل الحساب. يرجى تعيين كلمة مرور جديدة." });
+        }
+
+        // -------------------------------------------------------
+        // 🟢 3) المستخدم يعيّن كلمة المرور لأول مرة
+        // -------------------------------------------------------
+        [HttpPost("SetNewPassword")]
+        [AllowAnonymous]
+        public async Task<IActionResult> SetNewPassword([FromBody] ResetPasswordDTO dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
+            if (user.Status != "PendingPassword")
+                return BadRequest("لا يمكن تعيين كلمة مرور الآن.");
+
+            user.PasswordHash = _passwordHasher.HashPassword(user, dto.NewPassword);
+            user.Status = "Active";
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🔐 تم تعيين كلمة مرور جديدة بنجاح." });
+        }
+
 
         [HttpPut("UpdatePassenger/{id}")]
         [Authorize(Roles = "Admin,Supervisor")]

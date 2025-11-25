@@ -1,13 +1,14 @@
-﻿using Microsoft.AspNetCore.Identity;
+﻿using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TawseeltekAPI.Data;
 using TawseeltekAPI.Dto;
 using TawseeltekAPI.Models;
-using WebApplication1.Dto;
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
 using TawseeltekAPI.Services; // ✅ لإحضار AzureBlobStorageService
+using WebApplication1.Dto;
 
 namespace TawseeltekAPI.Controllers
 {
@@ -218,6 +219,40 @@ namespace TawseeltekAPI.Controllers
 
             return Ok(new { driver.DriverID, driver.AvailabilityStatus });
         }
+        [HttpPost("ActivateAccount")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ActivateAccount([FromBody] ActivationDTO dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
+
+            var token = await _context.VerificationTokens
+                .FirstOrDefaultAsync(t => t.UserId == user.UserID && t.Code == dto.Code && !t.IsUsed);
+
+            if (token == null) return BadRequest("رمز التفعيل غير صحيح.");
+            if (token.ExpiryTime < DateTime.UtcNow) return BadRequest("انتهت صلاحية الرمز.");
+
+            token.IsUsed = true;
+            user.Status = "Active";
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🎉 تم تفعيل الحساب. يرجى تعيين كلمة مرور جديدة." });
+        }
+
+        [HttpPost("SetNewPassword")]
+        [AllowAnonymous]
+        public async Task<IActionResult> SetNewPassword([FromBody] ResetPasswordDTO dto)
+        {
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.PhoneNumber == dto.PhoneNumber);
+            if (user == null) return BadRequest("رقم الهاتف غير موجود.");
+
+            user.PasswordHash = _passwordHasher.HashPassword(user, dto.NewPassword);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "🔐 تم تعيين كلمة مرور جديدة بنجاح." });
+        }
+
 
         // الموافقة والتحقق من السائق
         [HttpPut("VerifyDriver/{id}")]
@@ -229,11 +264,29 @@ namespace TawseeltekAPI.Controllers
 
             driver.Verified = true;
             driver.AvailabilityStatus = "Available";
-            driver.User.Status = "Active";
-
+            driver.User.Status = "PendingActivation"; // الحساب يحتاج تفعيل بالكود
             await _context.SaveChangesAsync();
-            return NoContent();
+
+            // 🔥 إنشاء رمز تفعيل
+            var code = new Random().Next(100000, 999999).ToString();
+
+            var token = new VerificationToken
+            {
+                UserId = driver.UserID,
+                Code = code,
+                ExpiryTime = DateTime.UtcNow.AddMinutes(30),
+                IsUsed = false
+            };
+
+            _context.VerificationTokens.Add(token);
+            await _context.SaveChangesAsync();
+
+            // ❗ عرض الكود في الـ Console ليظهر للمشرف
+            Console.WriteLine($"🔥 رمز تفعيل السائق {driver.User.FullName} هو: {code}");
+
+            return Ok(new { message = "تم التحقق من السائق. رمز التفعيل جاهز." });
         }
+
 
         // تعديل رصيد السائق
         [HttpPut("UpdateBalance/{id}")]
