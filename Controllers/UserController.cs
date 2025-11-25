@@ -133,7 +133,7 @@ namespace TawseeltekAPI.Controllers
         // -----------------------------
         [HttpPost("RegisterAdmin")]
         [Authorize(Roles = "Admin")]
-        public async Task<ActionResult<User>> RegisterAdmin([FromBody] UserRegisterDTO dto)
+        public async Task<ActionResult<User>> RegisterAdmin([FromBody] AdminRegisterDTO dto)
         {
             if (await _context.Users.AnyAsync(u => u.PhoneNumber == dto.PhoneNumber))
                 return BadRequest("رقم الهاتف مستخدم مسبقًا.");
@@ -148,11 +148,13 @@ namespace TawseeltekAPI.Controllers
                 CreatedAt = DateTime.UtcNow
             };
 
-            user.PasswordHash = _passwordHasher.HashPassword(user, dto.PasswordHash);
+            // 🔥 هاش كلمة المرور
+            user.PasswordHash = _passwordHasher.HashPassword(user, dto.Password);
+
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
-            return CreatedAtAction(nameof(GetUser), new { id = user.UserID }, user);
+            return Ok(new { message = "✔ تم إنشاء حساب المسؤول بنجاح", userID = user.UserID });
         }
 
         // -----------------------------

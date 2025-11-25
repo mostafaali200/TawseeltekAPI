@@ -10,6 +10,7 @@ namespace TawseeltekAPI.Models
         public string Role { get; set; } // Admin / Supervisor / Driver / Passenger
         public string Status { get; set; } = "Pending"; // Pending / Active / Suspended / Banned
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public string? PasswordHash { get; set; }   // ← إضافة ضرورية هنا
 
         // 🎁 نظام الإحالات الجديد
         public string ReferralCode { get; set; } // الكود الخاص بالمستخدم
